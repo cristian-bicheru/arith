@@ -1,139 +1,17 @@
 #pragma once
 
 #include <iostream>
-#include <fstream>
-#include <iomanip>
 #include <utility>
 #include <vector>
-#include <iterator>
 #include <cmath>
 #include <bitset>
 #include <cstring>
 #include <algorithm>
 #include <chrono>
 
+#include "bufferops.h"
+
 namespace arith {
-    template<class Type>
-    void EncodeTypeToBuffer(std::vector<unsigned char>& Buffer, uint64_t Index, Type* Value) {
-        auto* byteptr = reinterpret_cast<unsigned char*>(Value);
-        for (uint64_t i = 0; i < sizeof(Type); i++) {
-            Buffer[Index + i] = byteptr[i];
-        }
-    }
-
-    template<class Type>
-    void DecodeTypeFromBuffer(std::vector<unsigned char>& Buffer, uint64_t Index, Type* DecodedValue) {
-        auto* byteptr = reinterpret_cast<unsigned char*>(DecodedValue);
-        for (uint64_t i = 0; i < sizeof(Type); i++) {
-            byteptr[i] = Buffer[Index + i];
-        }
-    }
-
-    class CodecByteStream {
-    private:
-        std::vector<unsigned char> Data;
-        uint8_t IBitIndex = 7u;
-        uint64_t ByteIndex;
-        int PendingBits = 0;
-    public:
-        CodecByteStream(uint64_t BaseLength) {
-            Data.resize(BaseLength+1, 0u);
-            ByteIndex = BaseLength;
-        }
-
-        void WriteByte(uint8_t Byte) {
-            Data[ByteIndex] |= Byte>>(7u-IBitIndex);
-            Data.push_back(Byte<<(IBitIndex+1u));
-            ByteIndex++;
-        }
-
-        void WriteBit(uint8_t Bit) {
-            Data[ByteIndex] |= Bit<<IBitIndex;
-            if (IBitIndex == 0) {
-                ByteIndex++;
-                Data.push_back(0u);
-                IBitIndex = 7u;
-            } else {
-                IBitIndex--;
-            }
-        }
-
-        void WriteBitBuffered(uint8_t Bit) {
-            WriteBit(Bit);
-            Bit ^= 1u;
-            while (PendingBits > 0) {
-                WriteBit(Bit);
-                PendingBits--;
-            }
-        }
-
-        void IncPendingBits() {
-            PendingBits++;
-        }
-
-        void TruncateOne() {
-            Data.resize(Data.size()-1);
-            ByteIndex--;
-            IBitIndex = 7u;
-        }
-
-        std::vector<unsigned char>& GetBuffer() {
-            return Data;
-        }
-    };
-
-    class CodecBufferWrapper {
-    private:
-        std::vector<unsigned char> Buffer;
-        uint8_t BitShift;
-        uint8_t IBitShift;
-        uint64_t EffectiveSize;
-    public:
-        CodecBufferWrapper(std::vector<unsigned char>& InBuffer, uint8_t Shift) {
-            Buffer = InBuffer;
-            BitShift = Shift;
-            IBitShift = 8u-Shift;
-            EffectiveSize = Buffer.size() - (Shift == 0 ? 0 : 1); // If a shift is used, the buffer size effectively decreases by one
-        }
-
-        uint8_t operator[](uint64_t Index) {
-            return (Buffer[Index]<<BitShift)+(Buffer[Index+1u]>>IBitShift);
-        }
-
-        uint64_t Size() {
-            return EffectiveSize;
-        }
-
-        std::vector<unsigned char>& GetBuffer() {
-            return Buffer;
-        }
-    };
-
-    class CodecBitIterator {
-    private:
-        std::vector<unsigned char> Buffer;
-        uint64_t ByteIndex;
-        uint64_t BitIndex = 7u;
-    public:
-        CodecBitIterator(std::vector<unsigned char> Buf, uint64_t StartIndex) {
-            Buffer = std::move(Buf);
-            ByteIndex = StartIndex;
-        }
-
-        uint8_t ReadBit() {
-            uint8_t bit = (Buffer[ByteIndex]>>BitIndex)&1u;
-            if (BitIndex == 0u) {
-                BitIndex = 7u;
-                ByteIndex++;
-            } else {
-                BitIndex--;
-            }
-            return bit;
-        }
-    };
-
-    #define MIN(x, y) ((x)<=(y)?(x):(y))
-
     void ComputeProbabilities(uint32_t* ProbabilityTable, std::vector<unsigned char>& UncompressedBuffer, uint8_t BitShift) {
         memset(ProbabilityTable, 0u, 256*4);
         uint8_t val;
@@ -243,46 +121,16 @@ namespace arith {
 
         void EncodeToBuffer(std::vector<unsigned char>& Buffer, uint64_t StartIndex) {
             for (int i = 1; i < 257; i++) {
-                EncodeTypeToBuffer<uint32_t>(Buffer, StartIndex+4*(i-1), &Frequencies[i]);
+                buffer::EncodeTypeToBuffer<uint32_t>(Buffer, StartIndex+4*(i-1), &Frequencies[i]);
             }
         }
 
         void DecodeFromBuffer(std::vector<unsigned char>& Buffer, uint64_t StartIndex) {
             for (int i = 1; i < 257; i++) {
-                DecodeTypeFromBuffer<uint32_t>(Buffer, StartIndex+4*(i-1), &Frequencies[i]);
+                buffer::DecodeTypeFromBuffer<uint32_t>(Buffer, StartIndex+4*(i-1), &Frequencies[i]);
             }
         }
     };
-
-    bool LoadFile(const std::string* path, std::vector<unsigned char>& buffer) {
-        std::ifstream file(path->c_str(), std::fstream::binary);
-
-        if (file) {
-            std::noskipws(file);
-
-            file.seekg(0, file.end);
-            uint64_t len = file.tellg();
-            file.seekg(0, file.beg);
-
-            buffer.resize(len, 0u);
-            std::copy(std::istream_iterator<unsigned char>(file),
-                      std::istream_iterator<unsigned char>(),
-                      &buffer[0]);
-
-            file.close();
-            return true;
-        }
-
-        return false;
-    }
-
-    bool SaveFile(const std::vector<unsigned char>& Buffer, const std::string *Path) {
-        std::ofstream file(Path->c_str(), std::fstream::binary);
-        std::noskipws(file);
-        file.write(reinterpret_cast<const char *>(&Buffer[0]), Buffer.size());
-        file.close();
-        return file ? true : false;
-    }
 
     const uint64_t MAXVAL = UINT32_MAX; // ONLY USING 32 BITS OUT OF 64
     const uint64_t QUARTER = (MAXVAL >> 2ull) + 1ull;
@@ -292,11 +140,11 @@ namespace arith {
 
     void CompressBuffer(std::vector<unsigned char>& InputBuffer,
                         CodecProbabilityTable& ProbabilityTable,
-                        CodecByteStream& OutputBuffer) {
+                        buffer::CodecByteStream& OutputBuffer) {
         uint64_t high = MAXVAL;
         uint64_t low = 0ull;
         uint8_t shift = ProbabilityTable.GetShift();
-        arith::CodecBufferWrapper Buffer(InputBuffer, shift);
+        buffer::CodecBufferWrapper Buffer(InputBuffer, shift);
         OutputBuffer.WriteByte(shift);
         OutputBuffer.WriteByte((InputBuffer[InputBuffer.size()-1]<<shift)+(InputBuffer[0]>>(8u-shift))); // residual due to shift
         uint64_t pLow, pUp, pDenom, range;
@@ -350,11 +198,11 @@ namespace arith {
 
     void UncompressBuffer(std::vector<unsigned char>& InputBuffer,
                           CodecProbabilityTable& ProbabilityTable,
-                          CodecByteStream& OutputBuffer,
+                          buffer::CodecByteStream& OutputBuffer,
                           uint64_t UncompressedSize) {
         uint8_t shift = InputBuffer[256*4+8];
         uint8_t residual_byte = InputBuffer[256*4+9];
-        CodecBitIterator Buffer(InputBuffer, 256*4+10);
+        buffer::CodecBitIterator Buffer(InputBuffer, 256*4+10);
         uint64_t high = MAXVAL;
         uint64_t low = 0ull;
         uint64_t value = 0ull;
@@ -424,26 +272,24 @@ namespace arith {
         std::cout << std::endl;
     }
 
-    enum CodecStatusCode {Success, FileReadError, FileWriteError, BadCompressionStream};
-
     // Buffer Compression/Decompression API
-    CodecStatusCode CompressBuffer(std::vector<unsigned char>& UncompressedBuffer, CodecByteStream& CompressedBuffer) {
+    CodecStatusCode CompressBuffer(std::vector<unsigned char>& UncompressedBuffer, buffer::CodecByteStream& CompressedBuffer) {
         std::cout << "Initializing Compressor..." << std::endl;
         CodecProbabilityTable ProbabilityTable;
         ProbabilityTable.GenerateTable(UncompressedBuffer);
         CompressBuffer(UncompressedBuffer, ProbabilityTable, CompressedBuffer);
         uint64_t UncompressedBufferSize = UncompressedBuffer.size();
-        EncodeTypeToBuffer<uint64_t>(CompressedBuffer.GetBuffer(), 0, &UncompressedBufferSize);
+        buffer::EncodeTypeToBuffer<uint64_t>(CompressedBuffer.GetBuffer(), 0, &UncompressedBufferSize);
         ProbabilityTable.EncodeToBuffer(CompressedBuffer.GetBuffer(), 8);
         return Success;
     }
 
-    CodecStatusCode UncompressBuffer(CodecByteStream& UncompressedBuffer, std::vector<unsigned char>& CompressedBuffer) {
+    CodecStatusCode UncompressBuffer(buffer::CodecByteStream& UncompressedBuffer, std::vector<unsigned char>& CompressedBuffer) {
         std::cout << "Initializing Uncompressor..." << std::endl;
         uint64_t UncompressedBufferSize;
         CodecProbabilityTable ProbabilityTable;
 
-        DecodeTypeFromBuffer<uint64_t>(CompressedBuffer, 0, &UncompressedBufferSize);
+        buffer::DecodeTypeFromBuffer<uint64_t>(CompressedBuffer, 0, &UncompressedBufferSize);
         ProbabilityTable.DecodeFromBuffer(CompressedBuffer, 8);
 
         UncompressBuffer(CompressedBuffer,
@@ -460,10 +306,10 @@ namespace arith {
     CodecStatusCode CompressFile(const std::string& InFile, const std::string& OutFile) {
         std::vector<unsigned char> UncompressedBuffer;
 
-        if (arith::LoadFile(&InFile, UncompressedBuffer)) {
-            arith::CodecByteStream CompressedBuffer(256*4+8);
+        if (buffer::LoadFile(&InFile, UncompressedBuffer)) {
+            buffer::CodecByteStream CompressedBuffer(256*4+8);
             arith::CompressBuffer(UncompressedBuffer, CompressedBuffer);
-            if (arith::SaveFile(CompressedBuffer.GetBuffer(), &OutFile)) {
+            if (buffer::SaveFile(CompressedBuffer.GetBuffer(), &OutFile)) {
                 return Success;
             } else {
                 std::cerr << "File Write Error." << std::endl;
@@ -478,8 +324,8 @@ namespace arith {
     CodecStatusCode UncompressFile(const std::string& InFile, const std::string& OutFile) {
         std::vector<unsigned char> CompressedBuffer;
 
-        if (arith::LoadFile(&InFile, CompressedBuffer)) {
-            arith::CodecByteStream UncompressedBuffer(0);
+        if (buffer::LoadFile(&InFile, CompressedBuffer)) {
+            buffer::CodecByteStream UncompressedBuffer(0);
             try {
                 arith::UncompressBuffer(UncompressedBuffer, CompressedBuffer);
             } catch (std::exception& e) {
@@ -487,7 +333,7 @@ namespace arith {
                 return BadCompressionStream;
             }
 
-            if (arith::SaveFile(UncompressedBuffer.GetBuffer(), &OutFile)) {
+            if (buffer::SaveFile(UncompressedBuffer.GetBuffer(), &OutFile)) {
                 return Success;
             } else {
                 std::cerr << "File Write Error." << std::endl;

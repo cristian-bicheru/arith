@@ -1,5 +1,5 @@
-CC=g++ --std=c++0x -O2
-HEADERS=arith.h
+CC=g++ --std=c++11 -O2
+HEADERS=arith.h huffman.h
 
 all: codec
 
